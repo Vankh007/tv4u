@@ -203,6 +203,7 @@ const VideoPlayer = ({
           episodes={playerEpisodes}
           currentEpisodeId={currentEpisodeId}
           onEpisodeSelect={handleEpisodeSelect}
+          seriesBackdrop={contentBackdrop}
         />
       );
     }

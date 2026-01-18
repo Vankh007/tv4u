@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { motion, AnimatePresence } from "framer-motion";
 import CastMemberDialog from "@/components/movie/CastMemberDialog";
 import { useProfileImage } from "@/hooks/useProfileImage";
+import { useNativeMobile } from "@/hooks/useNativeMobile";
 
 type VideoSourceDB = Database['public']['Tables']['video_sources']['Row'];
 
@@ -476,21 +477,23 @@ const Watch = () => {
     navigate(type === 'movie' ? '/movies' : '/series');
   };
 
+  const { isNative } = useNativeMobile();
+  
   // Mobile-only Layout
   return (
     <>
-    <div className="min-h-screen bg-background text-foreground">
+    <div className={`min-h-screen bg-background text-foreground ${isNative ? 'watch-page-native' : ''}`}>
       <SocialShareMeta
         title={content.title}
         description={content.description || ''}
         image={content.backdrop_url || content.thumbnail}
         type={content.type === 'movie' ? 'video.movie' : 'video.tv_show'}
       />
-      {/* Sticky Video Player with safe area padding */}
+      {/* Sticky Video Player - safe area applied via CSS for native portrait */}
       {(videoSources.length > 0 || (content?.access && content.access !== 'free')) && (
         <div 
-          className="sticky top-0 z-50 bg-black"
-          style={{ paddingTop: 'env(safe-area-inset-top)' }}
+          className={`sticky top-0 z-50 bg-black ${!isNative ? '' : ''}`}
+          style={!isNative ? { paddingTop: 'env(safe-area-inset-top)' } : undefined}
         >
           <VideoPlayer 
             videoSources={videoSources}
