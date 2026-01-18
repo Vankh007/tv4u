@@ -20,6 +20,8 @@ import {
   RotateCcw
 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
+import { usePinchZoom } from "@/hooks/usePinchZoom";
+import { EpisodeListDrawer } from "./EpisodeListDrawer";
 
 interface VideoSource {
   id: string;
@@ -52,6 +54,7 @@ interface MobileVideoPlayerProps {
   sourceType?: "mp4" | "hls" | "dash";
   onProgressUpdate?: (progress: number, duration: number) => void;
   initialProgress?: number;
+  seriesBackdrop?: string;
 }
 
 export const MobileVideoPlayer = ({
@@ -67,11 +70,13 @@ export const MobileVideoPlayer = ({
   sourceType = "hls",
   onProgressUpdate,
   initialProgress,
+  seriesBackdrop,
 }: MobileVideoPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const previousVideoUrlRef = useRef<string>("");
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -83,9 +88,16 @@ export const MobileVideoPlayer = ({
   const [buffered, setBuffered] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [showEpisodeDrawer, setShowEpisodeDrawer] = useState(false);
+  const [isTransitioning, setIsTransitioning] = useState(false);
 
   const isNative = Capacitor.isNativePlatform();
   const isAndroid = Capacitor.getPlatform() === 'android';
+
+  // Pinch-to-zoom like Telegram
+  const { scale, translateX, translateY, isPinching, resetZoom } = usePinchZoom(
+    containerRef as React.RefObject<HTMLElement>,
+    { minScale: 1, maxScale: 4, enabled: isFullscreen }
+  );
 
   // Format time helper
   const formatTime = (seconds: number) => {
@@ -94,15 +106,25 @@ export const MobileVideoPlayer = ({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Initialize Shaka Player
+  // Initialize Shaka Player with smooth transitions
   useEffect(() => {
     if (!videoRef.current || !videoUrl) return;
 
     const initPlayer = async () => {
+      // Smooth transition: show loading overlay but don't flicker
+      const isNewVideo = previousVideoUrlRef.current !== videoUrl;
+      if (isNewVideo && previousVideoUrlRef.current) {
+        setIsTransitioning(true);
+      }
       setIsLoading(true);
+      previousVideoUrlRef.current = videoUrl;
       
       if (playerRef.current) {
-        await playerRef.current.destroy();
+        try {
+          await playerRef.current.destroy();
+        } catch (e) {
+          console.log('Player cleanup error:', e);
+        }
       }
 
       shaka.polyfill.installAll();
@@ -117,11 +139,15 @@ export const MobileVideoPlayer = ({
 
       player.addEventListener('error', (event: any) => {
         console.error('Shaka Player error:', event.detail);
+        setIsTransitioning(false);
       });
 
       try {
         await player.load(videoUrl);
         setIsLoading(false);
+        
+        // Smooth transition complete
+        setTimeout(() => setIsTransitioning(false), 150);
         
         if (initialProgress && videoRef.current) {
           videoRef.current.currentTime = initialProgress;
@@ -133,6 +159,7 @@ export const MobileVideoPlayer = ({
       } catch (error) {
         console.error('Error loading video:', error);
         setIsLoading(false);
+        setIsTransitioning(false);
       }
     };
 
@@ -306,14 +333,23 @@ export const MobileVideoPlayer = ({
     lastTapRef.current = { time: now, x: tapX };
   };
 
+  // Handle episode selection with smooth transition
+  const handleEpisodeSelectInternal = (episode: Episode) => {
+    if (onEpisodeSelect) {
+      setIsTransitioning(true);
+      resetZoom();
+      onEpisodeSelect(episode);
+    }
+  };
+
   return (
     <div 
       ref={containerRef}
       className={`mobile-video-player relative bg-black ${
         isFullscreen 
           ? 'fixed inset-0 z-[9999] w-screen h-screen' 
-          : 'w-full aspect-video'
-      }`}
+          : 'w-full aspect-video native-portrait-safe'
+      } ${isTransitioning ? 'video-transitioning' : ''}`}
       onClick={handleScreenTap}
       onTouchStart={handleDoubleTap}
       style={isFullscreen ? { 
@@ -323,10 +359,10 @@ export const MobileVideoPlayer = ({
         maxHeight: '100vh',
       } : undefined}
     >
-      {/* Video Element */}
+      {/* Video Element with pinch-zoom transform */}
       <video
         ref={videoRef}
-        className={`${isFullscreen ? 'w-screen h-screen' : 'w-full h-full'} object-contain`}
+        className={`${isFullscreen ? 'w-screen h-screen' : 'w-full h-full'} object-contain transition-transform duration-100`}
         poster={poster}
         playsInline
         preload="auto"
@@ -337,13 +373,22 @@ export const MobileVideoPlayer = ({
           maxWidth: '100vw',
           maxHeight: '100vh',
           objectFit: 'contain',
+          transform: scale > 1 ? `scale(${scale}) translate(${translateX / scale}px, ${translateY / scale}px)` : undefined,
+          transformOrigin: 'center center',
         } : undefined}
       />
 
-      {/* Loading Spinner */}
-      {isLoading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-30">
+      {/* Loading Spinner / Transition Overlay */}
+      {(isLoading || isTransitioning) && (
+        <div className={`absolute inset-0 flex items-center justify-center z-30 transition-opacity duration-200 ${isTransitioning ? 'bg-black/80' : 'bg-black/50'}`}>
           <div className="w-12 h-12 border-4 border-white/30 border-t-white rounded-full animate-spin" />
+        </div>
+      )}
+
+      {/* Zoom indicator */}
+      {scale > 1 && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs px-3 py-1 rounded-full z-40">
+          {Math.round(scale * 100)}%
         </div>
       )}
 
@@ -509,56 +554,15 @@ export const MobileVideoPlayer = ({
         </div>
       </div>
 
-      {/* Episode Drawer (simplified for mobile) */}
+      {/* Episode Drawer - use the shared component */}
       {showEpisodeDrawer && episodes.length > 0 && onEpisodeSelect && (
-        <div 
-          className="absolute inset-0 bg-black/90 z-50 flex flex-col"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-between p-4 border-b border-white/10">
-            <span className="text-white font-medium">Episodes</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setShowEpisodeDrawer(false)}
-              className="h-8 w-8 text-white"
-            >
-              <ChevronDown className="h-5 w-5" />
-            </Button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-2">
-            {episodes.map((episode) => (
-              <button
-                key={episode.id}
-                onClick={() => {
-                  onEpisodeSelect(episode);
-                  setShowEpisodeDrawer(false);
-                }}
-                className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors ${
-                  currentEpisodeId === episode.id
-                    ? 'bg-cyan-500/20 border border-cyan-500'
-                    : 'bg-white/5 hover:bg-white/10'
-                }`}
-              >
-                {episode.thumbnail_url && (
-                  <img 
-                    src={episode.thumbnail_url} 
-                    alt=""
-                    className="w-20 h-12 object-cover rounded"
-                  />
-                )}
-                <div className="flex-1 text-left">
-                  <span className="text-white text-sm font-medium">
-                    Episode {episode.episode_number}
-                  </span>
-                  {episode.title && (
-                    <p className="text-white/60 text-xs truncate">{episode.title}</p>
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
+        <EpisodeListDrawer
+          episodes={episodes}
+          currentEpisodeId={currentEpisodeId}
+          onEpisodeSelect={handleEpisodeSelectInternal}
+          onClose={() => setShowEpisodeDrawer(false)}
+          seriesThumbnail={seriesBackdrop}
+        />
       )}
     </div>
   );
