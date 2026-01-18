@@ -188,10 +188,11 @@ const VideoPlayer = ({
     fetchVideoUrl();
   }, [isNative, isAndroid, hasAccess, convertedSources, effectiveAccessType, currentEpisodeId, movieId, mediaId, mediaType, excludeFromPlan, getProtectedUrl]);
 
-  // Use mobile player for native Android apps
-  if (isNative && isAndroid && mobileVideoUrl) {
-    return (
-      <div className="relative w-full aspect-video overflow-hidden">
+  // Use mobile player for native Android apps - always use MobileVideoPlayer when available
+  if (isNative && isAndroid) {
+    // If we have a video URL, use MobileVideoPlayer
+    if (mobileVideoUrl) {
+      return (
         <MobileVideoPlayer
           videoUrl={mobileVideoUrl}
           poster={contentBackdrop || currentEpisode?.still_path}
@@ -203,8 +204,17 @@ const VideoPlayer = ({
           currentEpisodeId={currentEpisodeId}
           onEpisodeSelect={handleEpisodeSelect}
         />
-      </div>
-    );
+      );
+    }
+    
+    // If still loading, show a loading state for Android native
+    if (protectedUrlLoading) {
+      return (
+        <div className="relative w-full aspect-video bg-black flex items-center justify-center">
+          <div className="w-10 h-10 border-4 border-white/30 border-t-white rounded-full animate-spin" />
+        </div>
+      );
+    }
   }
   
   // Use ShakaPlayer for web and non-Android platforms

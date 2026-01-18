@@ -240,25 +240,32 @@ export const MobileVideoPlayer = ({
     try {
       if (isNative) {
         if (!isFullscreen) {
+          // Entering fullscreen
+          document.body.classList.add('video-fullscreen');
           await StatusBar.hide();
           await ScreenOrientation.lock({ orientation: 'landscape' });
           if (isAndroid && (window as any).AndroidFullScreen) {
             (window as any).AndroidFullScreen.immersiveMode();
           }
+          setIsFullscreen(true);
         } else {
+          // Exiting fullscreen
+          document.body.classList.remove('video-fullscreen');
           await StatusBar.show();
           await ScreenOrientation.lock({ orientation: 'portrait' });
           if (isAndroid && (window as any).AndroidFullScreen) {
             (window as any).AndroidFullScreen.showSystemUI();
           }
+          setIsFullscreen(false);
         }
-        setIsFullscreen(!isFullscreen);
       } else {
         // Web fallback
         if (!isFullscreen && containerRef.current?.requestFullscreen) {
+          document.body.classList.add('video-fullscreen');
           await containerRef.current.requestFullscreen();
           setIsFullscreen(true);
         } else if (document.fullscreenElement && document.exitFullscreen) {
+          document.body.classList.remove('video-fullscreen');
           await document.exitFullscreen();
           setIsFullscreen(false);
         }
@@ -268,6 +275,13 @@ export const MobileVideoPlayer = ({
     }
     resetControlsTimeout();
   };
+
+  // Cleanup fullscreen class on unmount
+  useEffect(() => {
+    return () => {
+      document.body.classList.remove('video-fullscreen');
+    };
+  }, []);
 
   const handleScreenTap = () => {
     resetControlsTimeout();
@@ -295,18 +309,35 @@ export const MobileVideoPlayer = ({
   return (
     <div 
       ref={containerRef}
-      className={`mobile-video-player relative bg-black w-full ${isFullscreen ? 'fixed inset-0 z-[9999]' : 'aspect-video'}`}
+      className={`mobile-video-player relative bg-black ${
+        isFullscreen 
+          ? 'fixed inset-0 z-[9999] w-screen h-screen' 
+          : 'w-full aspect-video'
+      }`}
       onClick={handleScreenTap}
       onTouchStart={handleDoubleTap}
+      style={isFullscreen ? { 
+        width: '100vw', 
+        height: '100vh',
+        maxWidth: '100vw',
+        maxHeight: '100vh',
+      } : undefined}
     >
       {/* Video Element */}
       <video
         ref={videoRef}
-        className="w-full h-full object-contain"
+        className={`${isFullscreen ? 'w-screen h-screen' : 'w-full h-full'} object-contain`}
         poster={poster}
         playsInline
         preload="auto"
         crossOrigin="anonymous"
+        style={isFullscreen ? { 
+          width: '100vw', 
+          height: '100vh',
+          maxWidth: '100vw',
+          maxHeight: '100vh',
+          objectFit: 'contain',
+        } : undefined}
       />
 
       {/* Loading Spinner */}
