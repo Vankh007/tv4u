@@ -5,7 +5,7 @@ import { useNativeMobile } from "@/hooks/useNativeMobile";
 import { useProtectedVideoUrl } from "@/hooks/useProtectedVideoUrl";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useRental } from "@/hooks/useRental";
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 
 type VideoSourceDB = Database['public']['Tables']['video_sources']['Row'];
 
@@ -79,31 +79,41 @@ const VideoPlayer = ({
   // State for mobile player video URL
   const [mobileVideoUrl, setMobileVideoUrl] = useState<string | null>(null);
   const [mobileSourceType, setMobileSourceType] = useState<"mp4" | "hls" | "dash">("hls");
+  const [isLoadingMobileUrl, setIsLoadingMobileUrl] = useState(false);
+  
+  // Track the last fetched episode/source to prevent duplicate fetches
+  const lastFetchedRef = useRef<string | null>(null);
+  const prevEpisodeIdRef = useRef<string | undefined>(currentEpisodeId);
 
   // Convert DB types to component types
-  const convertedSources: VideoSource[] = videoSources.map(source => ({
-    id: source.id,
-    url: source.url,
-    quality: source.quality,
-    is_default: source.is_default,
-    server_name: source.server_name,
-    source_type: source.source_type,
-    quality_urls: source.quality_urls as Record<string, string> | null
-  }));
+  const convertedSources: VideoSource[] = useMemo(() => 
+    videoSources.map(source => ({
+      id: source.id,
+      url: source.url,
+      quality: source.quality,
+      is_default: source.is_default,
+      server_name: source.server_name,
+      source_type: source.source_type,
+      quality_urls: source.quality_urls as Record<string, string> | null
+    })), [videoSources]);
   
   // Convert episodes to player format
-  const playerEpisodes = episodes?.map(ep => ({
-    id: ep.id,
-    episode_number: ep.episode_number,
-    title: ep.name,
-    thumbnail_url: ep.still_path,
-  })) || [];
+  const playerEpisodes = useMemo(() => 
+    episodes?.map(ep => ({
+      id: ep.id,
+      episode_number: ep.episode_number,
+      title: ep.name,
+      thumbnail_url: ep.still_path,
+    })) || [], [episodes]);
 
-  const handleEpisodeSelect = (episode: { id: string; episode_number: number }) => {
+  const handleEpisodeSelect = useCallback((episode: { id: string; episode_number: number }) => {
     if (onEpisodeSelect) {
+      // Reset state for smooth transition
+      setMobileVideoUrl(null);
+      setIsLoadingMobileUrl(true);
       onEpisodeSelect(episode.id);
     }
-  };
+  }, [onEpisodeSelect]);
 
   // Check if user has access to content
   const hasAccess = useMemo(() => {
@@ -120,19 +130,45 @@ const VideoPlayer = ({
     return false;
   }, [effectiveAccessType, excludeFromPlan, hasActiveSubscription, hasActiveRental]);
 
+  // Reset loading state when episode changes
+  useEffect(() => {
+    if (prevEpisodeIdRef.current !== currentEpisodeId) {
+      prevEpisodeIdRef.current = currentEpisodeId;
+      // Only set loading if we're switching episodes (not initial load)
+      if (prevEpisodeIdRef.current) {
+        setIsLoadingMobileUrl(true);
+      }
+    }
+  }, [currentEpisodeId]);
+
   // For native Android, get the video URL for mobile player
   useEffect(() => {
-    if (!isNative || !isAndroid || !hasAccess) {
+    if (!isNative || !isAndroid) {
+      return;
+    }
+
+    if (!hasAccess) {
       setMobileVideoUrl(null);
+      setIsLoadingMobileUrl(false);
+      return;
+    }
+
+    // Create a unique key for this fetch to prevent duplicates
+    const defaultSource = convertedSources.find(s => s.is_default) || convertedSources[0];
+    const fetchKey = `${currentEpisodeId || movieId}-${defaultSource?.id || 'none'}`;
+    
+    // Skip if we already fetched for this combination
+    if (lastFetchedRef.current === fetchKey && mobileVideoUrl) {
+      setIsLoadingMobileUrl(false);
       return;
     }
 
     const fetchVideoUrl = async () => {
-      // Find the default source or first available
-      const defaultSource = convertedSources.find(s => s.is_default) || convertedSources[0];
+      setIsLoadingMobileUrl(true);
       
       if (!defaultSource) {
         setMobileVideoUrl(null);
+        setIsLoadingMobileUrl(false);
         return;
       }
 
@@ -152,15 +188,24 @@ const VideoPlayer = ({
       if (effectiveAccessType === 'free') {
         if (defaultSource.url) {
           setMobileVideoUrl(defaultSource.url);
+          lastFetchedRef.current = fetchKey;
         } else if (defaultSource.quality_urls) {
           const firstUrl = Object.values(defaultSource.quality_urls)[0];
           setMobileVideoUrl(firstUrl || null);
+          lastFetchedRef.current = fetchKey;
         }
+        setIsLoadingMobileUrl(false);
         return;
       }
 
       // For paid content, get protected URL
       try {
+        console.log('[VideoPlayer] Fetching protected URL for native Android:', {
+          sourceId: defaultSource.id,
+          episodeId: currentEpisodeId,
+          movieId: movieId,
+        });
+        
         const response = await getProtectedUrl({
           sourceId: defaultSource.id,
           episodeId: currentEpisodeId,
@@ -172,16 +217,22 @@ const VideoPlayer = ({
         });
         
         if (response?.success && response.source?.url) {
+          console.log('[VideoPlayer] Protected URL fetched successfully');
           setMobileVideoUrl(response.source.url);
+          lastFetchedRef.current = fetchKey;
         } else if (response?.source?.quality_urls) {
           const firstUrl = Object.values(response.source.quality_urls)[0];
           setMobileVideoUrl(firstUrl || null);
+          lastFetchedRef.current = fetchKey;
         } else {
+          console.error('[VideoPlayer] Failed to get protected URL:', response?.error);
           setMobileVideoUrl(null);
         }
       } catch (error) {
-        console.error('Error fetching protected URL:', error);
+        console.error('[VideoPlayer] Error fetching protected URL:', error);
         setMobileVideoUrl(null);
+      } finally {
+        setIsLoadingMobileUrl(false);
       }
     };
 
@@ -209,13 +260,16 @@ const VideoPlayer = ({
     }
     
     // If still loading, show a loading state for Android native
-    if (protectedUrlLoading) {
+    if (isLoadingMobileUrl || protectedUrlLoading) {
       return (
         <div className="relative w-full aspect-video bg-black flex items-center justify-center">
           <div className="w-10 h-10 border-4 border-white/30 border-t-white rounded-full animate-spin" />
         </div>
       );
     }
+    
+    // If no URL and not loading, fall back to ShakaPlayer
+    // This handles cases where the source is iframe/embed type
   }
   
   // Use ShakaPlayer for web and non-Android platforms
