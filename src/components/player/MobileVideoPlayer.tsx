@@ -106,6 +106,18 @@ export const MobileVideoPlayer = ({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // Detect source type from URL if needed
+  const detectSourceType = (url: string, providedType?: string): "mp4" | "hls" | "dash" => {
+    if (providedType === "mp4" || providedType === "hls" || providedType === "dash") {
+      return providedType;
+    }
+    const lowerUrl = url.toLowerCase();
+    if (lowerUrl.includes('.m3u8')) return "hls";
+    if (lowerUrl.includes('.mpd')) return "dash";
+    if (lowerUrl.includes('.mp4')) return "mp4";
+    return "hls"; // Default to HLS
+  };
+
   // Initialize Shaka Player with smooth transitions
   useEffect(() => {
     if (!videoRef.current || !videoUrl) return;
@@ -115,13 +127,20 @@ export const MobileVideoPlayer = ({
       const isNewVideo = previousVideoUrlRef.current !== videoUrl;
       if (isNewVideo && previousVideoUrlRef.current) {
         setIsTransitioning(true);
+        // Pause and reset current video first
+        if (videoRef.current) {
+          videoRef.current.pause();
+        }
       }
       setIsLoading(true);
+      setIsPlaying(false);
       previousVideoUrlRef.current = videoUrl;
       
+      // Cleanup existing player
       if (playerRef.current) {
         try {
           await playerRef.current.destroy();
+          playerRef.current = null;
         } catch (e) {
           console.log('Player cleanup error:', e);
         }
@@ -131,6 +150,8 @@ export const MobileVideoPlayer = ({
       
       if (!shaka.Player.isBrowserSupported()) {
         console.error('Shaka Player not supported');
+        setIsLoading(false);
+        setIsTransitioning(false);
         return;
       }
 
@@ -139,10 +160,14 @@ export const MobileVideoPlayer = ({
 
       player.addEventListener('error', (event: any) => {
         console.error('Shaka Player error:', event.detail);
+        setIsLoading(false);
         setIsTransitioning(false);
       });
 
       try {
+        const detectedType = detectSourceType(videoUrl, sourceType);
+        console.log('[MobileVideoPlayer] Loading video:', { url: videoUrl.substring(0, 50) + '...', type: detectedType });
+        
         await player.load(videoUrl);
         setIsLoading(false);
         
@@ -153,6 +178,7 @@ export const MobileVideoPlayer = ({
           videoRef.current.currentTime = initialProgress;
         }
         
+        // Do not autoplay - user must click play button
         if (autoplay && videoRef.current) {
           videoRef.current.play().catch(e => console.log('Autoplay blocked:', e));
         }
@@ -171,7 +197,7 @@ export const MobileVideoPlayer = ({
         playerRef.current = null;
       }
     };
-  }, [videoUrl, autoplay, initialProgress]);
+  }, [videoUrl, autoplay, initialProgress, sourceType]);
 
   // Video event listeners
   useEffect(() => {
