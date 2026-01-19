@@ -329,12 +329,20 @@ export const MobileVideoPlayer = ({
     resetControlsTimeout();
   };
 
-  // Cleanup fullscreen class on unmount
+  // Cleanup fullscreen class and restore UI on unmount
   useEffect(() => {
     return () => {
       document.body.classList.remove('video-fullscreen');
+      // Restore UI state when component unmounts (e.g., when switching episodes in fullscreen)
+      if (isNative && isFullscreen) {
+        StatusBar.show().catch(() => {});
+        ScreenOrientation.lock({ orientation: 'portrait' }).catch(() => {});
+        if (isAndroid && (window as any).AndroidFullScreen) {
+          (window as any).AndroidFullScreen.showSystemUI();
+        }
+      }
     };
-  }, []);
+  }, [isNative, isAndroid, isFullscreen]);
 
   const handleScreenTap = () => {
     resetControlsTimeout();

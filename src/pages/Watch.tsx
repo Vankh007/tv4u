@@ -320,10 +320,16 @@ const Watch = () => {
 
   const fetchVideoSource = async (episodeId: string) => {
     try {
+      console.log('[Watch] Fetching video sources for episode:', episodeId);
+      
+      // Find and set the target episode first
       const targetEpisode = episodes.find(ep => ep.id === episodeId);
       if (targetEpisode) {
         setCurrentEpisode(targetEpisode);
       }
+
+      // Clear existing sources to trigger loading state in VideoPlayer
+      setVideoSources([]);
 
       const { data: sourcesData } = await supabase
         .from('video_sources')
@@ -331,9 +337,12 @@ const Watch = () => {
         .eq('episode_id', episodeId)
         .order('is_default', { ascending: false });
 
+      console.log('[Watch] Video sources fetched:', sourcesData?.length || 0, 'sources');
+
       if (sourcesData && sourcesData.length > 0) {
         setVideoSources(sourcesData);
       } else {
+        // Try embedded sources from episode
         const { data: episodeData } = await supabase
           .from('episodes')
           .select('video_sources')
@@ -342,7 +351,7 @@ const Watch = () => {
 
         if (episodeData?.video_sources && Array.isArray(episodeData.video_sources)) {
           const embeddedSources = episodeData.video_sources.map((src: any, index: number) => ({
-            id: `embedded-${index}`,
+            id: `embedded-${episodeId}-${index}`,
             media_id: null,
             episode_id: episodeId,
             server_name: src.server || `Server ${index + 1}`,
@@ -357,8 +366,10 @@ const Watch = () => {
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           }));
+          console.log('[Watch] Using embedded sources:', embeddedSources.length);
           setVideoSources(embeddedSources as any);
         } else {
+          console.log('[Watch] No video sources found for episode');
           setVideoSources([]);
         }
       }
