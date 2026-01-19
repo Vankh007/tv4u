@@ -84,6 +84,7 @@ const VideoPlayer = ({
   // Track the last fetched episode/source to prevent duplicate fetches
   const lastFetchedRef = useRef<string | null>(null);
   const prevEpisodeIdRef = useRef<string | undefined>(currentEpisodeId);
+  const prevSourcesRef = useRef<string | null>(null);
 
   // Convert DB types to component types
   const convertedSources: VideoSource[] = useMemo(() => 
@@ -108,7 +109,9 @@ const VideoPlayer = ({
 
   const handleEpisodeSelect = useCallback((episode: { id: string; episode_number: number }) => {
     if (onEpisodeSelect) {
-      // Reset state for smooth transition
+      console.log('[VideoPlayer] Episode selected:', episode.id);
+      // Reset state for smooth transition - clear the cached fetch key
+      lastFetchedRef.current = null;
       setMobileVideoUrl(null);
       setIsLoadingMobileUrl(true);
       onEpisodeSelect(episode.id);
@@ -130,16 +133,26 @@ const VideoPlayer = ({
     return false;
   }, [effectiveAccessType, excludeFromPlan, hasActiveSubscription, hasActiveRental]);
 
-  // Reset loading state when episode changes
+  // Reset loading state when episode changes or sources change
   useEffect(() => {
-    if (prevEpisodeIdRef.current !== currentEpisodeId) {
+    const currentSourcesKey = convertedSources.map(s => s.id).join('-');
+    const episodeChanged = prevEpisodeIdRef.current !== currentEpisodeId;
+    const sourcesChanged = prevSourcesRef.current !== null && prevSourcesRef.current !== currentSourcesKey;
+    
+    if (episodeChanged || sourcesChanged) {
       prevEpisodeIdRef.current = currentEpisodeId;
-      // Only set loading if we're switching episodes (not initial load)
-      if (prevEpisodeIdRef.current) {
-        setIsLoadingMobileUrl(true);
+      prevSourcesRef.current = currentSourcesKey;
+      
+      // Reset fetched ref to force re-fetch with new sources
+      if (sourcesChanged) {
+        lastFetchedRef.current = null;
       }
+      
+      // Set loading state for transition
+      setMobileVideoUrl(null);
+      setIsLoadingMobileUrl(true);
     }
-  }, [currentEpisodeId]);
+  }, [currentEpisodeId, convertedSources]);
 
   // For native Android, get the video URL for mobile player
   useEffect(() => {
@@ -157,8 +170,16 @@ const VideoPlayer = ({
     const defaultSource = convertedSources.find(s => s.is_default) || convertedSources[0];
     const fetchKey = `${currentEpisodeId || movieId}-${defaultSource?.id || 'none'}`;
     
-    // Skip if we already fetched for this combination
+    console.log('[VideoPlayer] Checking fetch for native Android:', {
+      fetchKey,
+      lastFetched: lastFetchedRef.current,
+      hasMobileUrl: !!mobileVideoUrl,
+      sourcesCount: convertedSources.length,
+    });
+    
+    // Skip if we already fetched for this exact combination
     if (lastFetchedRef.current === fetchKey && mobileVideoUrl) {
+      console.log('[VideoPlayer] Skipping fetch - already have URL for this source');
       setIsLoadingMobileUrl(false);
       return;
     }
@@ -186,6 +207,11 @@ const VideoPlayer = ({
 
       // For free content, use URL directly
       if (effectiveAccessType === 'free') {
+        console.log('[VideoPlayer] Free content - using URL directly:', {
+          hasUrl: !!defaultSource.url,
+          hasQualityUrls: !!defaultSource.quality_urls,
+        });
+        
         if (defaultSource.url) {
           setMobileVideoUrl(defaultSource.url);
           lastFetchedRef.current = fetchKey;
@@ -193,6 +219,9 @@ const VideoPlayer = ({
           const firstUrl = Object.values(defaultSource.quality_urls)[0];
           setMobileVideoUrl(firstUrl || null);
           lastFetchedRef.current = fetchKey;
+        } else {
+          console.warn('[VideoPlayer] No URL found in free source');
+          setMobileVideoUrl(null);
         }
         setIsLoadingMobileUrl(false);
         return;
@@ -245,6 +274,7 @@ const VideoPlayer = ({
     if (mobileVideoUrl) {
       return (
         <MobileVideoPlayer
+          key={`mobile-${currentEpisodeId || movieId}-${mobileVideoUrl.substring(0, 50)}`} // Force remount on episode/URL change
           videoUrl={mobileVideoUrl}
           poster={contentBackdrop || currentEpisode?.still_path}
           autoplay={false}
@@ -262,7 +292,7 @@ const VideoPlayer = ({
     // If still loading, show a loading state for Android native
     if (isLoadingMobileUrl || protectedUrlLoading) {
       return (
-        <div className="relative w-full aspect-video bg-black flex items-center justify-center">
+        <div className="relative w-full aspect-video bg-black flex items-center justify-center native-portrait-safe">
           <div className="w-10 h-10 border-4 border-white/30 border-t-white rounded-full animate-spin" />
         </div>
       );
